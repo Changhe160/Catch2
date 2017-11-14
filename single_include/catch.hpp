@@ -1,6 +1,6 @@
 /*
  *  Catch v2.0.1
- *  Generated: 2017-11-03 11:53:39.642003
+ *  Generated: 2017-11-14 15:10:36.696334
  *  ----------------------------------------------------------
  *  This file has been merged from multiple headers. Please don't edit it directly
  *  Copyright (c) 2017 Two Blue Cubes Ltd. All rights reserved.
@@ -46,17 +46,24 @@
 // end catch_suppress_warnings.h
 #if defined(CATCH_CONFIG_MAIN) || defined(CATCH_CONFIG_RUNNER)
 #  define CATCH_IMPL
+#  define CATCH_CONFIG_ALL_PARTS
+#endif
+
+// In the impl file, we want to have access to all parts of the headers
+// Can also be used to sanely support PCHs
+#if defined(CATCH_CONFIG_ALL_PARTS)
 #  define CATCH_CONFIG_EXTERNAL_INTERFACES
 #  if defined(CATCH_CONFIG_DISABLE_MATCHERS)
 #    undef CATCH_CONFIG_DISABLE_MATCHERS
 #  endif
 #endif
 
+#if !defined(CATCH_CONFIG_IMPL_ONLY)
 // start catch_platform.h
 
 #ifdef __APPLE__
 # include <TargetConditionals.h>
-# if TARGET_OS_MAC == 1
+# if TARGET_OS_OSX == 1
 #  define CATCH_PLATFORM_MAC
 # elif TARGET_OS_IPHONE == 1
 #  define CATCH_PLATFORM_IPHONE
@@ -70,6 +77,7 @@
 #endif
 
 // end catch_platform.h
+
 #ifdef CATCH_IMPL
 #  ifndef CLARA_CONFIG_MAIN
 #    define CLARA_CONFIG_MAIN_NOT_DEFINED
@@ -477,11 +485,50 @@ struct AutoReg : NonCopyable {
 
 // start catch_tostring.h
 
-#include <sstream>
 #include <vector>
 #include <cstddef>
 #include <type_traits>
 #include <string>
+// start catch_stream.h
+
+#include <iosfwd>
+#include <cstddef>
+#include <ostream>
+
+namespace Catch {
+
+    std::ostream& cout();
+    std::ostream& cerr();
+    std::ostream& clog();
+
+    class StringRef;
+
+    struct IStream {
+        virtual ~IStream();
+        virtual std::ostream& stream() const = 0;
+    };
+
+    auto makeStream( StringRef const &filename ) -> IStream const*;
+
+    class ReusableStringStream {
+        std::size_t m_index;
+        std::ostream* m_oss;
+    public:
+        ReusableStringStream();
+        ~ReusableStringStream();
+
+        auto str() const -> std::string;
+
+        template<typename T>
+        auto operator << ( T const& value ) -> ReusableStringStream& {
+            *m_oss << value;
+            return *this;
+        }
+        auto get() -> std::ostream& { return *m_oss; }
+    };
+}
+
+// end catch_stream.h
 
 #ifdef __OBJC__
 // start catch_objc_arc.hpp
@@ -575,9 +622,9 @@ namespace Catch {
         static
         typename std::enable_if<::Catch::Detail::IsStreamInsertable<Fake>::value, std::string>::type
             convert(const Fake& t) {
-                std::ostringstream sstr;
-                sstr << t;
-                return sstr.str();
+                ReusableStringStream rss;
+                rss << t;
+                return rss.str();
         }
 
         template <typename Fake = T>
@@ -729,15 +776,15 @@ namespace Catch {
     namespace Detail {
         template<typename InputIterator>
         std::string rangeToString(InputIterator first, InputIterator last) {
-            std::ostringstream oss;
-            oss << "{ ";
+            ReusableStringStream rss;
+            rss << "{ ";
             if (first != last) {
-                oss << ::Catch::Detail::stringify(*first);
+                rss << ::Catch::Detail::stringify(*first);
                 for (++first; first != last; ++first)
-                    oss << ", " << ::Catch::Detail::stringify(*first);
+                    rss << ", " << ::Catch::Detail::stringify(*first);
             }
-            oss << " }";
-            return oss.str();
+            rss << " }";
+            return rss.str();
         }
     }
 
@@ -798,13 +845,13 @@ namespace Catch {
     template<typename T1, typename T2>
     struct StringMaker<std::pair<T1, T2> > {
         static std::string convert(const std::pair<T1, T2>& pair) {
-            std::ostringstream oss;
-            oss << "{ "
+            ReusableStringStream rss;
+            rss << "{ "
                 << ::Catch::Detail::stringify(pair.first)
                 << ", "
                 << ::Catch::Detail::stringify(pair.second)
                 << " }";
-            return oss.str();
+            return rss.str();
         }
     };
 }
@@ -841,11 +888,11 @@ namespace Catch {
     template<typename ...Types>
     struct StringMaker<std::tuple<Types...>> {
         static std::string convert(const std::tuple<Types...>& tuple) {
-            std::ostringstream os;
-            os << '{';
-            Detail::TupleElementPrinter<std::tuple<Types...>>::print(tuple, os);
-            os << " }";
-            return os.str();
+            ReusableStringStream rss;
+            rss << '{';
+            Detail::TupleElementPrinter<std::tuple<Types...>>::print(tuple, rss.get());
+            rss << " }";
+            return rss.str();
         }
     };
 }
@@ -864,10 +911,10 @@ struct ratio_string {
 
 template <class Ratio>
 std::string ratio_string<Ratio>::symbol() {
-    std::ostringstream oss;
-    oss << '[' << Ratio::num << '/'
+    Catch::ReusableStringStream rss;
+    rss << '[' << Ratio::num << '/'
         << Ratio::den << ']';
-    return oss.str();
+    return rss.str();
 }
 template <>
 struct ratio_string<std::atto> {
@@ -900,33 +947,33 @@ namespace Catch {
     template<typename Value, typename Ratio>
     struct StringMaker<std::chrono::duration<Value, Ratio>> {
         static std::string convert(std::chrono::duration<Value, Ratio> const& duration) {
-            std::ostringstream oss;
-            oss << duration.count() << ' ' << ratio_string<Ratio>::symbol() << 's';
-            return oss.str();
+            ReusableStringStream rss;
+            rss << duration.count() << ' ' << ratio_string<Ratio>::symbol() << 's';
+            return rss.str();
         }
     };
     template<typename Value>
     struct StringMaker<std::chrono::duration<Value, std::ratio<1>>> {
         static std::string convert(std::chrono::duration<Value, std::ratio<1>> const& duration) {
-            std::ostringstream oss;
-            oss << duration.count() << " s";
-            return oss.str();
+            ReusableStringStream rss;
+            rss << duration.count() << " s";
+            return rss.str();
         }
     };
     template<typename Value>
     struct StringMaker<std::chrono::duration<Value, std::ratio<60>>> {
         static std::string convert(std::chrono::duration<Value, std::ratio<60>> const& duration) {
-            std::ostringstream oss;
-            oss << duration.count() << " m";
-            return oss.str();
+            ReusableStringStream rss;
+            rss << duration.count() << " m";
+            return rss.str();
         }
     };
     template<typename Value>
     struct StringMaker<std::chrono::duration<Value, std::ratio<3600>>> {
         static std::string convert(std::chrono::duration<Value, std::ratio<3600>> const& duration) {
-            std::ostringstream oss;
-            oss << duration.count() << " h";
-            return oss.str();
+            ReusableStringStream rss;
+            rss << duration.count() << " h";
+            return rss.str();
         }
     };
 
@@ -972,7 +1019,7 @@ namespace Catch {
 #endif
 
 // end catch_tostring.h
-#include <ostream>
+#include <iosfwd>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -1254,7 +1301,6 @@ namespace Catch {
 // start catch_message.h
 
 #include <string>
-#include <sstream>
 
 namespace Catch {
 
@@ -1283,8 +1329,7 @@ namespace Catch {
             return *this;
         }
 
-        // !TBD reuse a global/ thread-local stream
-        std::ostringstream m_stream;
+        ReusableStringStream m_stream;
     };
 
     struct MessageBuilder : MessageStream {
@@ -1820,22 +1865,8 @@ namespace Catch {
 // end catch_interfaces_exception.h
 // start catch_approx.h
 
-// start catch_enforce.h
-
-#include <sstream>
-#include <stdexcept>
-
-#define CATCH_PREPARE_EXCEPTION( type, msg ) \
-    type( static_cast<std::ostringstream&&>( std::ostringstream() << msg ).str() )
-#define CATCH_INTERNAL_ERROR( msg ) \
-    throw CATCH_PREPARE_EXCEPTION( std::logic_error, CATCH_INTERNAL_LINEINFO << ": Internal Catch error: " << msg);
-#define CATCH_ERROR( msg ) \
-    throw CATCH_PREPARE_EXCEPTION( std::domain_error, msg )
-#define CATCH_ENFORCE( condition, msg ) \
-    do{ if( !(condition) ) CATCH_ERROR( msg ); } while(false)
-
-// end catch_enforce.h
 #include <type_traits>
+#include <stdexcept>
 
 namespace Catch {
 namespace Detail {
@@ -1906,9 +1937,12 @@ namespace Detail {
         template <typename T, typename = typename std::enable_if<std::is_constructible<double, T>::value>::type>
         Approx& epsilon( T const& newEpsilon ) {
             double epsilonAsDouble = static_cast<double>(newEpsilon);
-            CATCH_ENFORCE(epsilonAsDouble >= 0 && epsilonAsDouble <= 1.0,
-                          "Invalid Approx::epsilon: " << epsilonAsDouble
-                          << ", Approx::epsilon has to be between 0 and 1");
+            if( epsilonAsDouble < 0 || epsilonAsDouble > 1.0 ) {
+                throw std::domain_error
+                    (   "Invalid Approx::epsilon: " +
+                        Catch::Detail::stringify( epsilonAsDouble ) +
+                        ", Approx::epsilon has to be between 0 and 1" );
+            }
             m_epsilon = epsilonAsDouble;
             return *this;
         }
@@ -1916,9 +1950,13 @@ namespace Detail {
         template <typename T, typename = typename std::enable_if<std::is_constructible<double, T>::value>::type>
         Approx& margin( T const& newMargin ) {
             double marginAsDouble = static_cast<double>(newMargin);
-            CATCH_ENFORCE(marginAsDouble >= 0,
-                          "Invalid Approx::margin: " << marginAsDouble
-                          << ", Approx::Margin has to be non-negative.");
+            if( marginAsDouble < 0 ) {
+                throw std::domain_error
+                    (   "Invalid Approx::margin: " +
+                         Catch::Detail::stringify( marginAsDouble ) +
+                         ", Approx::Margin has to be non-negative." );
+
+            }
             m_margin = marginAsDouble;
             return *this;
         }
@@ -2013,12 +2051,12 @@ namespace Matchers {
             virtual bool match( PtrT* arg ) const = 0;
         };
 
-        template<typename ObjectT, typename ComparatorT = ObjectT>
-        struct MatcherBase : MatcherUntypedBase, MatcherMethod<ObjectT> {
+        template<typename T>
+        struct MatcherBase : MatcherUntypedBase, MatcherMethod<T> {
 
-            MatchAllOf<ComparatorT> operator && ( MatcherBase const& other ) const;
-            MatchAnyOf<ComparatorT> operator || ( MatcherBase const& other ) const;
-            MatchNotOf<ComparatorT> operator ! () const;
+            MatchAllOf<T> operator && ( MatcherBase const& other ) const;
+            MatchAnyOf<T> operator || ( MatcherBase const& other ) const;
+            MatchNotOf<T> operator ! () const;
         };
 
         template<typename ArgT>
@@ -2102,17 +2140,17 @@ namespace Matchers {
             MatcherBase<ArgT> const& m_underlyingMatcher;
         };
 
-        template<typename ObjectT, typename ComparatorT>
-        MatchAllOf<ComparatorT> MatcherBase<ObjectT, ComparatorT>::operator && ( MatcherBase const& other ) const {
-            return MatchAllOf<ComparatorT>() && *this && other;
+        template<typename T>
+        MatchAllOf<T> MatcherBase<T>::operator && ( MatcherBase const& other ) const {
+            return MatchAllOf<T>() && *this && other;
         }
-        template<typename ObjectT, typename ComparatorT>
-        MatchAnyOf<ComparatorT> MatcherBase<ObjectT, ComparatorT>::operator || ( MatcherBase const& other ) const {
-            return MatchAnyOf<ComparatorT>() || *this || other;
+        template<typename T>
+        MatchAnyOf<T> MatcherBase<T>::operator || ( MatcherBase const& other ) const {
+            return MatchAnyOf<T>() || *this || other;
         }
-        template<typename ObjectT, typename ComparatorT>
-        MatchNotOf<ComparatorT> MatcherBase<ObjectT, ComparatorT>::operator ! () const {
-            return MatchNotOf<ComparatorT>( *this );
+        template<typename T>
+        MatchNotOf<T> MatcherBase<T>::operator ! () const {
+            return MatchNotOf<T>( *this );
         }
 
     } // namespace Impl
@@ -2125,6 +2163,49 @@ using Matchers::Impl::MatcherBase;
 } // namespace Catch
 
 // end catch_matchers.h
+// start catch_matchers_floating.h
+
+#include <type_traits>
+#include <cmath>
+
+namespace Catch {
+namespace Matchers {
+
+    namespace Floating {
+
+        enum class FloatingPointKind : uint8_t;
+
+        struct WithinAbsMatcher : MatcherBase<double> {
+            WithinAbsMatcher(double target, double margin);
+            bool match(double const& matchee) const override;
+            std::string describe() const override;
+        private:
+            double m_target;
+            double m_margin;
+        };
+
+        struct WithinUlpsMatcher : MatcherBase<double> {
+            WithinUlpsMatcher(double target, int ulps, FloatingPointKind baseType);
+            bool match(double const& matchee) const override;
+            std::string describe() const override;
+        private:
+            double m_target;
+            int m_ulps;
+            FloatingPointKind m_type;
+        };
+
+    } // namespace Floating
+
+    // The following functions create the actual matcher objects.
+    // This allows the types to be inferred
+    Floating::WithinUlpsMatcher WithinULP(double target, int maxUlpDiff);
+    Floating::WithinUlpsMatcher WithinULP(float target, int maxUlpDiff);
+    Floating::WithinAbsMatcher WithinAbs(double target, double margin);
+
+} // namespace Matchers
+} // namespace Catch
+
+// end catch_matchers_floating.h
 // start catch_matchers_string.h
 
 #include <string>
@@ -2169,6 +2250,16 @@ namespace Matchers {
             bool match( std::string const& source ) const override;
         };
 
+        struct RegexMatcher : MatcherBase<std::string> {
+            RegexMatcher( std::string regex, CaseSensitive::Choice caseSensitivity );
+            bool match( std::string const& matchee ) const override;
+            std::string describe() const override;
+
+        private:
+            std::string m_regex;
+            CaseSensitive::Choice m_caseSensitivity;
+        };
+
     } // namespace StdString
 
     // The following functions create the actual matcher objects.
@@ -2178,6 +2269,7 @@ namespace Matchers {
     StdString::ContainsMatcher Contains( std::string const& str, CaseSensitive::Choice caseSensitivity = CaseSensitive::Yes );
     StdString::EndsWithMatcher EndsWith( std::string const& str, CaseSensitive::Choice caseSensitivity = CaseSensitive::Yes );
     StdString::StartsWithMatcher StartsWith( std::string const& str, CaseSensitive::Choice caseSensitivity = CaseSensitive::Yes );
+    StdString::RegexMatcher Matches( std::string const& regex, CaseSensitive::Choice caseSensitivity = CaseSensitive::Yes );
 
 } // namespace Matchers
 } // namespace Catch
@@ -2191,7 +2283,7 @@ namespace Matchers {
     namespace Vector {
 
         template<typename T>
-        struct ContainsElementMatcher : MatcherBase<std::vector<T>, T> {
+        struct ContainsElementMatcher : MatcherBase<std::vector<T>> {
 
             ContainsElementMatcher(T const &comparator) : m_comparator( comparator) {}
 
@@ -2212,7 +2304,7 @@ namespace Matchers {
         };
 
         template<typename T>
-        struct ContainsMatcher : MatcherBase<std::vector<T>, std::vector<T> > {
+        struct ContainsMatcher : MatcherBase<std::vector<T>> {
 
             ContainsMatcher(std::vector<T> const &comparator) : m_comparator( comparator ) {}
 
@@ -2242,7 +2334,7 @@ namespace Matchers {
         };
 
         template<typename T>
-        struct EqualsMatcher : MatcherBase<std::vector<T>, std::vector<T> > {
+        struct EqualsMatcher : MatcherBase<std::vector<T>> {
 
             EqualsMatcher(std::vector<T> const &comparator) : m_comparator( comparator ) {}
 
@@ -2918,69 +3010,6 @@ namespace Catch {
 
 // end catch_interfaces_config.h
 // Libstdc++ doesn't like incomplete classes for unique_ptr
-// start catch_stream.h
-
-// start catch_streambuf.h
-
-#include <streambuf>
-
-namespace Catch {
-
-    class StreamBufBase : public std::streambuf {
-    public:
-        virtual ~StreamBufBase();
-    };
-}
-
-// end catch_streambuf.h
-#include <streambuf>
-#include <ostream>
-#include <fstream>
-#include <memory>
-
-namespace Catch {
-
-    std::ostream& cout();
-    std::ostream& cerr();
-    std::ostream& clog();
-
-    struct IStream {
-        virtual ~IStream();
-        virtual std::ostream& stream() const = 0;
-    };
-
-    class FileStream : public IStream {
-        mutable std::ofstream m_ofs;
-    public:
-        FileStream( std::string const& filename );
-        ~FileStream() override = default;
-    public: // IStream
-        std::ostream& stream() const override;
-    };
-
-    class CoutStream : public IStream {
-        mutable std::ostream m_os;
-    public:
-        CoutStream();
-        ~CoutStream() override = default;
-
-    public: // IStream
-        std::ostream& stream() const override;
-    };
-
-    class DebugOutStream : public IStream {
-        std::unique_ptr<StreamBufBase> m_streamBuf;
-        mutable std::ostream m_os;
-    public:
-        DebugOutStream();
-        ~DebugOutStream() override = default;
-
-    public: // IStream
-        std::ostream& stream() const override;
-    };
-}
-
-// end catch_stream.h
 
 #include <memory>
 #include <vector>
@@ -3115,7 +3144,7 @@ namespace Catch {
         std::string getExpandedExpression() const;
         std::string getMessage() const;
         SourceLineInfo getSourceInfo() const;
-        std::string getTestMacroName() const;
+        StringRef getTestMacroName() const;
 
     //protected:
         AssertionInfo m_info;
@@ -3408,6 +3437,7 @@ namespace Catch {
 #include <cstdio>
 #include <assert.h>
 #include <memory>
+#include <ostream>
 
 namespace Catch {
     void prepareExpandedExpression(AssertionResult& result);
@@ -3423,7 +3453,8 @@ namespace Catch {
             stream( _config.stream() )
         {
             m_reporterPrefs.shouldRedirectStdOut = false;
-            CATCH_ENFORCE( DerivedT::getSupportedVerbosities().count( m_config->verbosity() ), "Verbosity level not supported by this reporter" );
+            if( !DerivedT::getSupportedVerbosities().count( m_config->verbosity() ) )
+                throw std::domain_error( "Verbosity level not supported by this reporter" );
         }
 
         ReporterPreferences getPreferences() const override {
@@ -3536,7 +3567,8 @@ namespace Catch {
             stream( _config.stream() )
         {
             m_reporterPrefs.shouldRedirectStdOut = false;
-            CATCH_ENFORCE( DerivedT::getSupportedVerbosities().count( m_config->verbosity() ), "Verbosity level not supported by this reporter" );
+            if( !DerivedT::getSupportedVerbosities().count( m_config->verbosity() ) )
+                throw std::domain_error( "Verbosity level not supported by this reporter" );
         }
         ~CumulativeReporterBase() override = default;
 
@@ -3786,6 +3818,8 @@ namespace Catch {
 // end catch_external_interfaces.h
 #endif
 
+#endif // ! CATCH_CONFIG_IMPL_ONLY
+
 #ifdef CATCH_IMPL
 // start catch_impl.hpp
 
@@ -4008,9 +4042,9 @@ namespace Detail {
     }
 
     std::string Approx::toString() const {
-        std::ostringstream oss;
-        oss << "Approx( " << ::Catch::Detail::stringify( m_value ) << " )";
-        return oss.str();
+        ReusableStringStream rss;
+        rss << "Approx( " << ::Catch::Detail::stringify( m_value ) << " )";
+        return rss.str();
     }
 
     bool Approx::equalityComparisonImpl(const double other) const {
@@ -4205,10 +4239,9 @@ namespace Catch {
 
         if( reconstructedExpression.empty() ) {
             if( lazyExpression ) {
-                // !TBD Use stringstream for now, but rework above to pass stream in
-                std::ostringstream oss;
-                oss << lazyExpression;
-                reconstructedExpression = oss.str();
+                ReusableStringStream rss;
+                rss << lazyExpression;
+                reconstructedExpression = rss.str();
             }
         }
         return reconstructedExpression;
@@ -4243,7 +4276,7 @@ namespace Catch {
 
     std::string AssertionResult::getExpression() const {
         if( isFalseTest( m_info.resultDisposition ) )
-            return "!(" + std::string(m_info.capturedExpression) + ")";
+            return "!(" + m_info.capturedExpression + ")";
         else
             return m_info.capturedExpression;
     }
@@ -4254,9 +4287,9 @@ namespace Catch {
             expr = m_info.capturedExpression;
         else {
             expr.reserve( m_info.macroName.size() + m_info.capturedExpression.size() + 4 );
-            expr += m_info.macroName;
+            expr += m_info.macroName.c_str();
             expr += "( ";
-            expr += m_info.capturedExpression;
+            expr += m_info.capturedExpression.c_str();
             expr += " )";
         }
         return expr;
@@ -4280,7 +4313,7 @@ namespace Catch {
         return m_info.lineInfo;
     }
 
-    std::string AssertionResult::getTestMacroName() const {
+    StringRef AssertionResult::getTestMacroName() const {
         return m_info.macroName;
     }
 
@@ -5804,6 +5837,21 @@ namespace Catch {
 // end catch_common.cpp
 // start catch_config.cpp
 
+// start catch_enforce.h
+
+#include <stdexcept>
+#include <iosfwd>
+
+#define CATCH_PREPARE_EXCEPTION( type, msg ) \
+    type( static_cast<std::ostringstream&&>( Catch::ReusableStringStream().get() << msg ).str() )
+#define CATCH_INTERNAL_ERROR( msg ) \
+    throw CATCH_PREPARE_EXCEPTION( std::logic_error, CATCH_INTERNAL_LINEINFO << ": Internal Catch error: " << msg);
+#define CATCH_ERROR( msg ) \
+    throw CATCH_PREPARE_EXCEPTION( std::domain_error, msg )
+#define CATCH_ENFORCE( condition, msg ) \
+    do{ if( !(condition) ) CATCH_ERROR( msg ); } while(false)
+
+// end catch_enforce.h
 namespace Catch {
 
     Config::Config( ConfigData const& data )
@@ -5853,16 +5901,7 @@ namespace Catch {
     Verbosity Config::verbosity() const                { return m_data.verbosity; }
 
     IStream const* Config::openStream() {
-        if( m_data.outputFilename.empty() )
-            return new CoutStream();
-        else if( m_data.outputFilename[0] == '%' ) {
-            if( m_data.outputFilename == "%debug" )
-                return new DebugOutStream();
-            else
-                CATCH_ERROR( "Unrecognised stream: '" << m_data.outputFilename << "'" );
-        }
-        else
-            return new FileStream( m_data.outputFilename );
+        return Catch::makeStream(m_data.outputFilename);
     }
 
 } // end namespace Catch
@@ -5919,6 +5958,8 @@ namespace Catch {
 #endif // defined(CATCH_PLATFORM_WINDOWS)
 
 // end catch_windows_h_proxy.h
+#include <sstream>
+
 namespace Catch {
     namespace {
 
@@ -6208,13 +6249,15 @@ namespace Catch {
 
 #ifdef CATCH_PLATFORM_MAC
 
-    #include <assert.h>
-    #include <stdbool.h>
-    #include <sys/types.h>
-    #include <unistd.h>
-    #include <sys/sysctl.h>
+#  include <assert.h>
+#  include <stdbool.h>
+#  include <sys/types.h>
+#  include <unistd.h>
+#  include <sys/sysctl.h>
+#  include <cstddef>
+#  include <ostream>
 
-    namespace Catch {
+namespace Catch {
 
         // The following function is taken directly from the following technical note:
         // http://developer.apple.com/library/mac/#qa/qa2004/qa1361.html
@@ -7000,13 +7043,14 @@ namespace Catch {
         }
 
         for( auto const& tagCount : tagCounts ) {
-            std::ostringstream oss;
-            oss << "  " << std::setw(2) << tagCount.second.count << "  ";
+            ReusableStringStream rss;
+            rss << "  " << std::setw(2) << tagCount.second.count << "  ";
+            auto str = rss.str();
             auto wrapper = Column( tagCount.second.all() )
                                                     .initialIndent( 0 )
-                                                    .indent( oss.str().size() )
+                                                    .indent( str.size() )
                                                     .width( CATCH_CONFIG_CONSOLE_WIDTH-10 );
-            Catch::cout() << oss.str() << wrapper << '\n';
+            Catch::cout() << str << wrapper << '\n';
         }
         Catch::cout() << pluralise( tagCounts.size(), "tag" ) << '\n' << std::endl;
         return tagCounts.size();
@@ -7071,7 +7115,133 @@ using Matchers::Impl::MatcherBase;
 
 } // namespace Catch
 // end catch_matchers.cpp
+// start catch_matchers_floating.cpp
+
+#include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
+
+namespace Catch {
+namespace Matchers {
+namespace Floating {
+enum class FloatingPointKind : uint8_t {
+    Float,
+    Double
+};
+}
+}
+}
+
+namespace {
+
+template <typename T>
+struct Converter;
+
+template <>
+struct Converter<float> {
+    static_assert(sizeof(float) == sizeof(int32_t), "Important ULP matcher assumption violated");
+    Converter(float f) {
+        std::memcpy(&i, &f, sizeof(f));
+    }
+    int32_t i;
+};
+
+template <>
+struct Converter<double> {
+    static_assert(sizeof(double) == sizeof(int64_t), "Important ULP matcher assumption violated");
+    Converter(double d) {
+        std::memcpy(&i, &d, sizeof(d));
+    }
+    int64_t i;
+};
+
+template <typename T>
+auto convert(T t) -> Converter<T> {
+    return Converter<T>(t);
+}
+
+template <typename FP>
+bool almostEqualUlps(FP lhs, FP rhs, int maxUlpDiff) {
+    // Comparison with NaN should always be false.
+    // This way we can rule it out before getting into the ugly details
+    if (std::isnan(lhs) || std::isnan(rhs)) {
+        return false;
+    }
+
+    auto lc = convert(lhs);
+    auto rc = convert(rhs);
+
+    if ((lc.i < 0) != (rc.i < 0)) {
+        // Potentially we can have +0 and -0
+        return lhs == rhs;
+    }
+
+    auto ulpDiff = std::abs(lc.i - rc.i);
+    return ulpDiff <= maxUlpDiff;
+}
+
+}
+
+namespace Catch {
+namespace Matchers {
+namespace Floating {
+    WithinAbsMatcher::WithinAbsMatcher(double target, double margin)
+        :m_target{ target }, m_margin{ margin } {}
+
+    // Performs equivalent check of std::fabs(lhs - rhs) <= margin
+    // But without the subtraction to allow for INFINITY in comparison
+    bool WithinAbsMatcher::match(double const& matchee) const {
+        return (matchee + m_margin >= m_target) && (m_target + m_margin >= m_margin);
+    }
+
+    std::string WithinAbsMatcher::describe() const {
+        return "is within " + ::Catch::Detail::stringify(m_margin) + " of " + ::Catch::Detail::stringify(m_target);
+    }
+
+    WithinUlpsMatcher::WithinUlpsMatcher(double target, int ulps, FloatingPointKind baseType)
+        :m_target{ target }, m_ulps{ ulps }, m_type{ baseType } {
+        if (m_ulps < 0) {
+            throw std::domain_error("Expected ulp difference has to be >0");
+        }
+    }
+
+    bool WithinUlpsMatcher::match(double const& matchee) const {
+        switch (m_type) {
+        case FloatingPointKind::Float:
+            return almostEqualUlps<float>(static_cast<float>(matchee), static_cast<float>(m_target), m_ulps);
+        case FloatingPointKind::Double:
+            return almostEqualUlps<double>(matchee, m_target, m_ulps);
+        default:
+            throw std::domain_error("Unknown FloatingPointKind value");
+        }
+    }
+
+    std::string WithinUlpsMatcher::describe() const {
+        return "is within " + std::to_string(m_ulps) + " ULPs of " + ::Catch::Detail::stringify(m_target) + ((m_type == FloatingPointKind::Float)? "f" : "");
+    }
+
+}// namespace Floating
+
+Floating::WithinUlpsMatcher WithinULP(double target, int maxUlpDiff) {
+    return Floating::WithinUlpsMatcher(target, maxUlpDiff, Floating::FloatingPointKind::Double);
+}
+
+Floating::WithinUlpsMatcher WithinULP(float target, int maxUlpDiff) {
+    return Floating::WithinUlpsMatcher(target, maxUlpDiff, Floating::FloatingPointKind::Float);
+}
+
+Floating::WithinAbsMatcher WithinAbs(double target, double margin) {
+    return Floating::WithinAbsMatcher(target, margin);
+}
+
+} // namespace Matchers
+} // namespace Catch
+
+// end catch_matchers_floating.cpp
 // start catch_matchers_string.cpp
+
+#include <regex>
 
 namespace Catch {
 namespace Matchers {
@@ -7134,6 +7304,21 @@ namespace Matchers {
             return endsWith( m_comparator.adjustString( source ), m_comparator.m_str );
         }
 
+        RegexMatcher::RegexMatcher(std::string regex, CaseSensitive::Choice caseSensitivity): m_regex(std::move(regex)), m_caseSensitivity(caseSensitivity) {}
+
+        bool RegexMatcher::match(std::string const& matchee) const {
+            auto flags = std::regex::ECMAScript; // ECMAScript is the default syntax option anyway
+            if (m_caseSensitivity == CaseSensitive::Choice::No) {
+                flags |= std::regex::icase;
+            }
+            auto reg = std::regex(m_regex, flags);
+            return std::regex_match(matchee, reg);
+        }
+
+        std::string RegexMatcher::describe() const {
+            return "matches " + ::Catch::Detail::stringify(m_regex) + ((m_caseSensitivity == CaseSensitive::Choice::Yes)? " case sensitively" : " case insensitively");
+        }
+
     } // namespace StdString
 
     StdString::EqualsMatcher Equals( std::string const& str, CaseSensitive::Choice caseSensitivity ) {
@@ -7147,6 +7332,10 @@ namespace Matchers {
     }
     StdString::StartsWithMatcher StartsWith( std::string const& str, CaseSensitive::Choice caseSensitivity ) {
         return StdString::StartsWithMatcher( StdString::CasedString( str, caseSensitivity) );
+    }
+
+    StdString::RegexMatcher Matches(std::string const& regex, CaseSensitive::Choice caseSensitivity) {
+        return StdString::RegexMatcher(regex, caseSensitivity);
     }
 
 } // namespace Matchers
@@ -7533,13 +7722,12 @@ namespace Catch {
 
     public:
         StreamRedirect(std::ostream& stream, std::string& targetString);
-
         ~StreamRedirect();
 
     private:
         std::ostream& m_stream;
         std::streambuf* m_prevBuf;
-        std::ostringstream m_oss;
+        ReusableStringStream m_oss;
         std::string& m_targetString;
     };
 
@@ -7553,7 +7741,7 @@ namespace Catch {
     private:
         std::streambuf* m_cerrBuf;
         std::streambuf* m_clogBuf;
-        std::ostringstream m_oss;
+        ReusableStringStream m_oss;
         std::string& m_targetString;
     };
 
@@ -7647,6 +7835,9 @@ namespace Catch {
 
 #include <cassert>
 #include <algorithm>
+#include <sstream>
+
+static auto const& defaultExpression = "{Unknown expression after the reported line}";
 
 namespace Catch {
 
@@ -7654,7 +7845,7 @@ namespace Catch {
         : m_stream(stream),
         m_prevBuf(stream.rdbuf()),
         m_targetString(targetString) {
-        stream.rdbuf(m_oss.rdbuf());
+        stream.rdbuf(m_oss.get().rdbuf());
     }
 
     StreamRedirect::~StreamRedirect() {
@@ -7665,8 +7856,8 @@ namespace Catch {
     StdErrRedirect::StdErrRedirect(std::string & targetString)
         :m_cerrBuf(cerr().rdbuf()), m_clogBuf(clog().rdbuf()),
         m_targetString(targetString) {
-        cerr().rdbuf(m_oss.rdbuf());
-        clog().rdbuf(m_oss.rdbuf());
+        cerr().rdbuf(m_oss.get().rdbuf());
+        clog().rdbuf(m_oss.get().rdbuf());
     }
 
     StdErrRedirect::~StdErrRedirect() {
@@ -7892,8 +8083,8 @@ namespace Catch {
 
     void RunContext::assertionPassed() {
         ++m_totals.assertions.passed;
-        m_lastAssertionInfo.capturedExpression = "{Unknown expression after the reported line}";
-        m_lastAssertionInfo.macroName = "";
+        m_lastAssertionInfo.capturedExpression = StringRef(defaultExpression, sizeof(defaultExpression) - 1);
+        m_lastAssertionInfo.macroName = StringRef("", 0);
     }
 
     void RunContext::assertionRun() {
@@ -8377,106 +8568,190 @@ namespace Catch {
 // end catch_startup_exception_registry.cpp
 // start catch_stream.cpp
 
-#include <stdexcept>
 #include <cstdio>
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <memory>
+
+#if defined(__clang__)
+#    pragma clang diagnostic push
+#    pragma clang diagnostic ignored "-Wexit-time-destructors"
+#endif
 
 namespace Catch {
-
-    template<typename WriterF, std::size_t bufferSize=256>
-    class StreamBufImpl : public StreamBufBase {
-        char data[bufferSize];
-        WriterF m_writer;
-
-    public:
-        StreamBufImpl() {
-            setp( data, data + sizeof(data) );
-        }
-
-        ~StreamBufImpl() noexcept {
-            StreamBufImpl::sync();
-        }
-
-    private:
-        int overflow( int c ) override {
-            sync();
-
-            if( c != EOF ) {
-                if( pbase() == epptr() )
-                    m_writer( std::string( 1, static_cast<char>( c ) ) );
-                else
-                    sputc( static_cast<char>( c ) );
-            }
-            return 0;
-        }
-
-        int sync() override {
-            if( pbase() != pptr() ) {
-                m_writer( std::string( pbase(), static_cast<std::string::size_type>( pptr() - pbase() ) ) );
-                setp( pbase(), epptr() );
-            }
-            return 0;
-        }
-    };
-
-    ///////////////////////////////////////////////////////////////////////////
 
     Catch::IStream::~IStream() = default;
 
-    FileStream::FileStream( std::string const& filename ) {
-        m_ofs.open( filename.c_str() );
-        CATCH_ENFORCE( !m_ofs.fail(), "Unable to open file: '" << filename << "'" );
+    namespace detail { namespace {
+        template<typename WriterF, std::size_t bufferSize=256>
+        class StreamBufImpl : public std::streambuf {
+            char data[bufferSize];
+            WriterF m_writer;
+
+        public:
+            StreamBufImpl() {
+                setp( data, data + sizeof(data) );
+            }
+
+            ~StreamBufImpl() noexcept {
+                StreamBufImpl::sync();
+            }
+
+        private:
+            int overflow( int c ) override {
+                sync();
+
+                if( c != EOF ) {
+                    if( pbase() == epptr() )
+                        m_writer( std::string( 1, static_cast<char>( c ) ) );
+                    else
+                        sputc( static_cast<char>( c ) );
+                }
+                return 0;
+            }
+
+            int sync() override {
+                if( pbase() != pptr() ) {
+                    m_writer( std::string( pbase(), static_cast<std::string::size_type>( pptr() - pbase() ) ) );
+                    setp( pbase(), epptr() );
+                }
+                return 0;
+            }
+        };
+
+        ///////////////////////////////////////////////////////////////////////////
+
+        struct OutputDebugWriter {
+
+            void operator()( std::string const&str ) {
+                writeToDebugConsole( str );
+            }
+        };
+
+        ///////////////////////////////////////////////////////////////////////////
+
+        class FileStream : public IStream {
+            mutable std::ofstream m_ofs;
+        public:
+            FileStream( StringRef filename ) {
+                m_ofs.open( filename.c_str() );
+                CATCH_ENFORCE( !m_ofs.fail(), "Unable to open file: '" << filename << "'" );
+            }
+            ~FileStream() override = default;
+        public: // IStream
+            std::ostream& stream() const override {
+                return m_ofs;
+            }
+        };
+
+        ///////////////////////////////////////////////////////////////////////////
+
+        class CoutStream : public IStream {
+            mutable std::ostream m_os;
+        public:
+            // Store the streambuf from cout up-front because
+            // cout may get redirected when running tests
+            CoutStream() : m_os( Catch::cout().rdbuf() ) {}
+            ~CoutStream() override = default;
+
+        public: // IStream
+            std::ostream& stream() const override { return m_os; }
+        };
+
+        ///////////////////////////////////////////////////////////////////////////
+
+        class DebugOutStream : public IStream {
+            std::unique_ptr<StreamBufImpl<OutputDebugWriter>> m_streamBuf;
+            mutable std::ostream m_os;
+        public:
+            DebugOutStream()
+            :   m_streamBuf( new StreamBufImpl<OutputDebugWriter>() ),
+                m_os( m_streamBuf.get() )
+            {}
+
+            ~DebugOutStream() override = default;
+
+        public: // IStream
+            std::ostream& stream() const override { return m_os; }
+        };
+
+    }} // namespace anon::detail
+
+    ///////////////////////////////////////////////////////////////////////////
+
+    auto makeStream( StringRef const &filename ) -> IStream const* {
+        if( filename.empty() )
+            return new detail::CoutStream();
+        else if( filename[0] == '%' ) {
+            if( filename == "%debug" )
+                return new detail::DebugOutStream();
+            else
+                CATCH_ERROR( "Unrecognised stream: '" << filename << "'" );
+        }
+        else
+            return new detail::FileStream( filename );
     }
 
-    std::ostream& FileStream::stream() const {
-        return m_ofs;
-    }
+    // This class encapsulates the idea of a pool of ostringstreams that can be reused.
+    struct StringStreams {
+        std::vector<std::unique_ptr<std::ostringstream>> m_streams;
+        std::vector<std::size_t> m_unused;
+        std::ostringstream m_referenceStream; // Used for copy state/ flags from
 
-    struct OutputDebugWriter {
+        auto add() -> std::size_t {
+            if( m_unused.empty() ) {
+                m_streams.push_back( std::unique_ptr<std::ostringstream>( new std::ostringstream ) );
+                return m_streams.size()-1;
+            }
+            else {
+                auto index = m_unused.back();
+                m_unused.pop_back();
+                return index;
+            }
+        }
 
-        void operator()( std::string const&str ) {
-            writeToDebugConsole( str );
+        void release( std::size_t index ) {
+            m_streams[index]->copyfmt( m_referenceStream ); // Restore initial flags and other state
+            m_unused.push_back(index);
+        }
+
+        // !TBD: put in TLS
+        static auto instance() -> StringStreams& {
+            static StringStreams s_stringStreams;
+            return s_stringStreams;
         }
     };
 
-    DebugOutStream::DebugOutStream()
-    :   m_streamBuf( new StreamBufImpl<OutputDebugWriter>() ),
-        m_os( m_streamBuf.get() )
+    ReusableStringStream::ReusableStringStream()
+    :   m_index( StringStreams::instance().add() ),
+        m_oss( StringStreams::instance().m_streams[m_index].get() )
     {}
 
-    std::ostream& DebugOutStream::stream() const {
-        return m_os;
+    ReusableStringStream::~ReusableStringStream() {
+        static_cast<std::ostringstream*>( m_oss )->str("");
+        m_oss->clear();
+        StringStreams::instance().release( m_index );
     }
 
-    // Store the streambuf from cout up-front because
-    // cout may get redirected when running tests
-    CoutStream::CoutStream()
-    :   m_os( Catch::cout().rdbuf() )
-    {}
-
-    std::ostream& CoutStream::stream() const {
-        return m_os;
+    auto ReusableStringStream::str() const -> std::string {
+        return static_cast<std::ostringstream*>( m_oss )->str();
     }
+
+    ///////////////////////////////////////////////////////////////////////////
 
 #ifndef CATCH_CONFIG_NOSTDOUT // If you #define this you must implement these functions
-    std::ostream& cout() {
-        return std::cout;
-    }
-    std::ostream& cerr() {
-        return std::cerr;
-    }
-    std::ostream& clog() {
-        return std::clog;
-    }
+    std::ostream& cout() { return std::cout; }
+    std::ostream& cerr() { return std::cerr; }
+    std::ostream& clog() { return std::clog; }
 #endif
 }
-// end catch_stream.cpp
-// start catch_streambuf.cpp
 
-namespace Catch {
-    StreamBufBase::~StreamBufBase() = default;
-}
-// end catch_streambuf.cpp
+#if defined(__clang__)
+#    pragma clang diagnostic pop
+#endif
+// end catch_stream.cpp
 // start catch_string_manip.cpp
 
 #include <algorithm>
@@ -8556,15 +8831,25 @@ namespace Catch {
 #endif
 
 #include <ostream>
-#include <cassert>
 #include <cstring>
+#include <stdexcept>
 
 namespace Catch {
+     namespace {
 
-    auto getEmptyStringRef() -> StringRef {
-        static StringRef s_emptyStringRef("");
-        return s_emptyStringRef;
-    }
+     auto getEmptyStringRef() -> StringRef {
+         static StringRef s_emptyStringRef("");
+         return s_emptyStringRef;
+     }
+
+     char const* enforceNonNull(char const* ptr) {
+         if (ptr == nullptr) {
+             std::abort();
+         }
+         return ptr;
+     }
+
+     }
 
     StringRef::StringRef() noexcept
     :   StringRef( getEmptyStringRef() )
@@ -8583,21 +8868,15 @@ namespace Catch {
         other.m_data = nullptr;
     }
 
-    StringRef::StringRef( char const* rawChars ) noexcept
-    :   m_start( rawChars ),
-        m_size( static_cast<size_type>( std::strlen( rawChars ) ) )
-    {
-        assert( rawChars != nullptr );
-    }
+    StringRef::StringRef(char const* rawChars) noexcept
+        :   m_start( enforceNonNull(rawChars) ),
+            m_size( static_cast<size_type>(std::strlen(rawChars)))
+    {}
 
     StringRef::StringRef( char const* rawChars, size_type size ) noexcept
     :   m_start( rawChars ),
         m_size( size )
-    {
-        size_type rawSize = rawChars == nullptr ? 0 : static_cast<size_type>( std::strlen( rawChars ) );
-        if( rawSize < size )
-            m_size = rawSize;
-    }
+    {}
 
     StringRef::StringRef( std::string const& stdString ) noexcept
     :   m_start( stdString.c_str() ),
@@ -8736,6 +9015,8 @@ namespace Catch {
 // end catch_tag_alias_autoregistrar.cpp
 // start catch_tag_alias_registry.cpp
 
+#include <sstream>
+
 namespace Catch {
 
     TagAliasRegistry::~TagAliasRegistry() {}
@@ -8784,6 +9065,7 @@ namespace Catch {
 #include <cctype>
 #include <exception>
 #include <algorithm>
+#include <sstream>
 
 namespace Catch {
 
@@ -8997,9 +9279,9 @@ namespace Catch {
     void TestRegistry::registerTest( TestCase const& testCase ) {
         std::string name = testCase.getTestCaseInfo().name;
         if( name.empty() ) {
-            std::ostringstream oss;
-            oss << "Anonymous test case " << ++m_unnamedCount;
-            return registerTest( testCase.withName( oss.str() ) );
+            ReusableStringStream rss;
+            rss << "Anonymous test case " << ++m_unnamedCount;
+            return registerTest( testCase.withName( rss.str() ) );
         }
         m_functions.push_back( testCase );
     }
@@ -9046,6 +9328,7 @@ namespace Catch {
 #include <assert.h>
 #include <stdexcept>
 #include <memory>
+#include <sstream>
 
 #if defined(__clang__)
 #    pragma clang diagnostic push
@@ -9537,6 +9820,7 @@ namespace Catch {
 #    pragma clang diagnostic ignored "-Wglobal-constructors"
 #endif
 
+#include <cmath>
 #include <iomanip>
 
 namespace Catch {
@@ -9572,21 +9856,25 @@ namespace Detail {
         }
 
         unsigned char const *bytes = static_cast<unsigned char const *>(object);
-        std::ostringstream os;
-        os << "0x" << std::setfill('0') << std::hex;
+        ReusableStringStream rss;
+        rss << "0x" << std::setfill('0') << std::hex;
         for( ; i != end; i += inc )
-             os << std::setw(2) << static_cast<unsigned>(bytes[i]);
-       return os.str();
+             rss << std::setw(2) << static_cast<unsigned>(bytes[i]);
+       return rss.str();
     }
 }
 
 template<typename T>
 std::string fpToString( T value, int precision ) {
-    std::ostringstream oss;
-    oss << std::setprecision( precision )
+    if (std::isnan(value)) {
+        return "nan";
+    }
+
+    ReusableStringStream rss;
+    rss << std::setprecision( precision )
         << std::fixed
         << value;
-    std::string d = oss.str();
+    std::string d = rss.str();
     std::size_t i = d.find_last_not_of( '0' );
     if( i != std::string::npos && i != d.size()-1 ) {
         if( d[i] == '.' )
@@ -9670,12 +9958,12 @@ std::string StringMaker<long>::convert(long value) {
     return ::Catch::Detail::stringify(static_cast<long long>(value));
 }
 std::string StringMaker<long long>::convert(long long value) {
-    std::ostringstream oss;
-    oss << value;
+    ReusableStringStream rss;
+    rss << value;
     if (value > Detail::hexThreshold) {
-        oss << " (0x" << std::hex << value << ')';
+        rss << " (0x" << std::hex << value << ')';
     }
-    return oss.str();
+    return rss.str();
 }
 
 std::string StringMaker<unsigned int>::convert(unsigned int value) {
@@ -9685,12 +9973,12 @@ std::string StringMaker<unsigned long>::convert(unsigned long value) {
     return ::Catch::Detail::stringify(static_cast<unsigned long long>(value));
 }
 std::string StringMaker<unsigned long long>::convert(unsigned long long value) {
-    std::ostringstream oss;
-    oss << value;
+    ReusableStringStream rss;
+    rss << value;
     if (value > Detail::hexThreshold) {
-        oss << " (0x" << std::hex << value << ')';
+        rss << " (0x" << std::hex << value << ')';
     }
-    return oss.str();
+    return rss.str();
 }
 
 std::string StringMaker<bool>::convert(bool b) {
@@ -9834,6 +10122,8 @@ namespace Catch {
 // end catch_version.cpp
 // start catch_wildcard_pattern.cpp
 
+#include <sstream>
+
 namespace Catch {
 
     WildcardPattern::WildcardPattern( std::string const& pattern,
@@ -9875,7 +10165,6 @@ namespace Catch {
 
 // start catch_xmlwriter.h
 
-#include <sstream>
 #include <vector>
 
 namespace Catch {
@@ -9937,10 +10226,9 @@ namespace Catch {
 
         template<typename T>
         XmlWriter& writeAttribute( std::string const& name, T const& attribute ) {
-            m_oss.clear();
-            m_oss.str(std::string());
-            m_oss << attribute;
-            return writeAttribute( name, m_oss.str() );
+            ReusableStringStream rss;
+            rss << attribute;
+            return writeAttribute( name, rss.str() );
         }
 
         XmlWriter& writeText( std::string const& text, bool indent = true );
@@ -9964,7 +10252,6 @@ namespace Catch {
         std::vector<std::string> m_tags;
         std::string m_indent;
         std::ostream& m_os;
-        std::ostringstream m_oss;
     };
 
 }
@@ -11018,9 +11305,9 @@ namespace Catch {
                 colour( _colour )
             {}
             SummaryColumn addRow( std::size_t count ) {
-                std::ostringstream oss;
-                oss << count;
-                std::string row = oss.str();
+                ReusableStringStream rss;
+                rss << count;
+                std::string row = rss.str();
                 for( auto& oldRow : rows ) {
                     while( oldRow.size() < row.size() )
                         oldRow = ' ' + oldRow;
@@ -11130,7 +11417,7 @@ namespace Catch {
 // start catch_reporter_junit.cpp
 
 #include <assert.h>
-
+#include <sstream>
 #include <ctime>
 #include <algorithm>
 
@@ -11346,15 +11633,15 @@ namespace Catch {
                 xml.writeAttribute( "message", result.getExpandedExpression() );
                 xml.writeAttribute( "type", result.getTestMacroName() );
 
-                std::ostringstream oss;
+                ReusableStringStream rss;
                 if( !result.getMessage().empty() )
-                    oss << result.getMessage() << '\n';
+                    rss << result.getMessage() << '\n';
                 for( auto const& msg : stats.infoMessages )
                     if( msg.type == ResultWas::Info )
-                        oss << msg.message << '\n';
+                        rss << msg.message << '\n';
 
-                oss << "at " << result.getSourceInfo();
-                xml.writeText( oss.str(), false );
+                rss << "at " << result.getSourceInfo();
+                xml.writeText( rss.str(), false );
             }
         }
 
@@ -11739,6 +12026,8 @@ int main (int argc, char * const argv[]) {
 // end catch_default_main.hpp
 #endif
 
+#if !defined(CATCH_CONFIG_IMPL_ONLY)
+
 #ifdef CLARA_CONFIG_MAIN_NOT_DEFINED
 #  undef CLARA_CONFIG_MAIN
 #endif
@@ -11992,6 +12281,8 @@ using Catch::Detail::Approx;
 using Catch::Detail::Approx;
 
 #endif
+
+#endif // ! CATCH_CONFIG_IMPL_ONLY
 
 // start catch_reenable_warnings.h
 
